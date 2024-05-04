@@ -363,6 +363,9 @@ mreq, iorq, rd, wr, data_out, busack_out, intack_out, mr,
 	wire disp = (idd | ifd) & (mr1 | mw1);
 	wire i_in = i_inan | i_inrc | i_inblock;
 	wire i_out = i_outna | i_outcr | i_outblock;
+	// R800 instruction
+	wire i_mulub = ied & ih[3] & il[1];
+	wire i_muluw = ied & ih[3] & il[3];
 	//
 	wire mr = g_mr1 | g_mr2; // for debug
 	wire intack_out = (g_if | g_iack) & intack;
@@ -479,6 +482,7 @@ mreq, iorq, rd, wr, data_out, busack_out, intack_out, mr,
 	// selector 1 (for alu-input b)
 	wire sel1_tmp = i_ldrr | i_ldrhl | i_ldhlr | al_r | i_rs_r | i_bit_r | i_setres_r;
 	wire sel1_b = sel1_tmp & il[0]
+		| i_mulub & im[0]	//R800
 		| incdec8 & im[0]
 		| g_mw2 & i_ldnndd & im[0]
 		| g_mw1 & i_push & im[0]
@@ -486,33 +490,39 @@ mreq, iorq, rd, wr, data_out, busack_out, intack_out, mr,
 		| i_djnz
 		| i_outcr & im[0];
 	wire sel1_c = sel1_tmp & il[1]
+		| i_mulub & im[1]	//R800
 		| incdec8 & im[1]
 		| g_mw1 & i_ldnndd & im[0]
 		| g_mw2 & i_push & im[0]
 		| i_outcr & im[1];
 	wire sel1_d = sel1_tmp & il[2]
+		| i_mulub & im[2]	//R800
 		| incdec8 & im[2]
 		| g_mw2 & i_ldnndd & im[2]
 		| g_mw1 & i_push & im[2]
 		| i_c16 & (im[2] | im[3])
 		| i_outcr & im[2];
 	wire sel1_e = sel1_tmp & il[3]
+		| i_mulub & im[3]	//R800
 		| incdec8 & im[3]
 		| g_mw1 & i_ldnndd & im[2]
 		| g_mw2 & i_push & im[2]
 		| i_outcr & im[3];
 	wire sel1_h = sel1_tmp & il[4]
+		| i_mulub & im[4]	//R800
 		| incdec8 & im[4]
 		| g_mw2 & (i_ldnnhl | i_ldnndd & im[4])
 		| g_mw1 & (i_push & im[4] | i_exsphl)
 		| i_c16 & (im[4] | im[5])
 		| i_outcr & im[4];
 	wire sel1_l = sel1_tmp & il[5]
+		| i_mulub & im[5]	//R800
 		| incdec8 & im[5]
 		| g_mw1 & (i_ldnnhl | i_ldnndd & im[4])
 		| g_mw2 & (i_push & im[4] | i_exsphl)
 		| i_outcr & im[5];
 	wire sel1_a = sel1_tmp & il[7] | i_ldbca | i_lddea 
+		| i_mulub & im[7]	//R800
 		| incdec8 & im[7]
 		| i_cpl | i_neg 
 		| g_mw1 & (i_ldnna | i_push & im[6])
@@ -574,12 +584,15 @@ mreq, iorq, rd, wr, data_out, busack_out, intack_out, mr,
 	//
 	// selector 2 (for asu-input a)
 	wire sel2_bc = g_if & (i_ldblock | i_cpblock | (i_c16 | i_incdec16) & ~i[5] & ~i[4])
+		| g_if & i_muluw & ~i[5] & ~i[4]//R800
 		| g_in & i_inblock
 		| g_mr1 & i_outblock;
 	wire sel2_de = g_mw1 & i_ldblock
+		| g_if & i_muluw & ~i[5] & i[4]//R800
 		| (i_c16 | i_incdec16) & ~i[5] & i[4];
 	wire sel2_hl = g_disp 
 		| i_ldsphl | i_exdehl | (i_c16 | i_incdec16) & i[5] & ~i[4] | i_jphl
+		| g_if & i_muluw & i[5] & ~i[4]//R800
 		| g_mr1 & (i_ldblock | i_cpblock)
 		| g_out & i_outblock
 		| g_mw1 & i_inblock;
@@ -622,6 +635,11 @@ mreq, iorq, rd, wr, data_out, busack_out, intack_out, mr,
 	asu asu(.a(asu_a), .b(asu_b), .ci(asu_ci), .i(asu_i), .z(asu_z), .co(asu_co));
 	always @(posedge clk)
 		if (s_if | s_in) q_asu_zero <= asu_zero;
+
+	// R800 instruction
+	wire [15:0] mulub= q_a * alu_b;		//R800
+	wire [31:0] muluw= {q_h,q_l} * asu_a;		//R800
+
 	//
 	// address selector
 	//
@@ -693,13 +711,17 @@ mreq, iorq, rd, wr, data_out, busack_out, intack_out, mr,
 	wire cv3 = l;
 	wire cv4 = r;
 	wire cv5 = logic;
-	assign d_f[0] = data_in[0] & load_f
+	wire cvmb = |mulub[15:8];//R800
+	wire cvmw = |muluw[31:16];//R800
+	wire df0 = data_in[0] & load_f
 		| (alu_c[7] ^ sub) & cv0
 		| ~q_f[0] & cv1
 		| cv2
 		| alu_b[7] & cv3
 		| alu_b[0] & cv4
 		| q_f[0] & ~(load_f | cv0 | cv1 | cv2 | cv3 | cv4 | cv5);
+	assign d_f[0]=(i_mulub | i_muluw)?(i_mulub & cvmb)|(i_muluw & cvmw):df0;//R800
+
 	wire nv0 = i_ioblock;
 	wire nv1 = (arith8 | incdec8 | arith16) & subf | i_cpblock | i_cpl | i_neg;
 	wire nv2 = (arith8 | incdec8 | add16 | arith16) & ~subf | ldair | i_inrc | i_rd | i_ccf | i_scf | i_ldblock | logic | rs | ibit;
@@ -712,13 +734,14 @@ mreq, iorq, rd, wr, data_out, busack_out, intack_out, mr,
 	wire pv2 = arith8 | arith16 | i_neg | incdec8;
 	wire pv3 = logic | i_daa | i_rotate2 | shift | i_rd | i_inrc;
 	wire pv4 = ibit;
-	assign d_f[2] = data_in[2] & load_f
+	wire df2 = data_in[2] & load_f
 		| iff2 & pv0
 		| ~q_asu_zero & pv1
 		| (alu_c[7] ^ alu_c[6]) & pv2
 		| ~^alu_z[7:0] & pv3
 		|~sel & pv4
 		| q_f[2] & ~(load_f | pv0 | pv1 | pv2 | pv3 | pv4);
+	assign d_f[2]=(i_mulub | i_muluw)?1'b0:df2;//R800
 	wire xy0 = arith8_notcp | incdec8 | i_daa | i_cpl | i_neg | i_ccf | i_scf | add16 | arith16 | rs | i_rd | i_inrc;
 	wire xy1 = i_cp;
 	wire xy2 = ibit;
@@ -751,17 +774,21 @@ mreq, iorq, rd, wr, data_out, busack_out, intack_out, mr,
 	wire zs1 = ibit;
 	wire zl = ~| alu_z[7:0];
 	wire zu = ~| asu_z[7:0];
-	assign d_f[6] = data_in[6] & load_f
+	wire zmb = ~|mulub[15:0];//R800
+	wire zmw = ~|muluw[31:0];//R800
+	wire df6 = data_in[6] & load_f
 		| zl & zs0 & (~arith16 | zu)
 		| ~sel & zs1
 		| q_asu_zero & i_inblock
 		| asu_zero & i_outblock
 		| q_f[6] & ~(load_f | zs0 | zs1 | i_ioblock);
-	assign d_f[7] = data_in[7] & load_f
+	assign d_f[6]=(i_mulub | i_muluw)?(i_mulub & zmb)|(i_muluw & zmw):df6;//R800
+	wire df7 = data_in[7] & load_f
 		| alu_z[7] & zs0
 		| i[5] & i[4] & i[3] & sel & zs1
 		| q_b[7] & i_ioblock
 		| q_f[7] & ~(load_f | zs0 | zs1 | i_ioblock);
+	assign d_f[7]=(i_mulub | i_muluw)?1'b0:df7;//R800
 //	assign q_f_out = q_f;
 	assign q_f_out = { q_f[7:6], 1'b0, q_f[4], 1'b0, q_f[2:0] };
 	wire [7:0] cond3_sel = { q_f[7], ~q_f[7], q_f[2], ~q_f[2], q_f[0], ~q_f[0], q_f[6], ~q_f[6] };
@@ -790,22 +817,22 @@ mreq, iorq, rd, wr, data_out, busack_out, intack_out, mr,
 		.load(load_c), .load2(loada_bc), 
 		.regsel(sel_exx),
 		.clk(clk), .q(q_c));
-	reg_dual2 reg_d(.a(alu_z), .a2(asu_z[15:8]), 
-		.load(load_d), .load2(loada_de), 
+	reg_dual3 reg_d(.a(alu_z), .a2(asu_z[15:8]), .a3(muluw[31:24]),//R800
+		.load(load_d), .load2(loada_de), .load3(i_muluw & s_if),//R800
 		.regsel(sel_exx),
 		.clk(clk), .q(q_d));
-	reg_dual2 reg_e(.a(alu_z), .a2(asu_z[7:0]), 
-		.load(load_e), .load2(loada_de), 
+	reg_dual3 reg_e(.a(alu_z), .a2(asu_z[7:0]), .a3(muluw[23:16]),//R800
+		.load(load_e), .load2(loada_de), .load3(i_muluw & s_if),//R800
 		.regsel(sel_exx),
 		.clk(clk), .q(q_e));
 	wire indexvalid = ~(g_mr1 & i_ldrhl | g_mw1 & i_ldhlr);
-	reg_quad3 reg_h(.a(alu_z), .a2(asu_z[15:8]), .a3(q_d),
-		.load(load_h), .load2(loada_hl), .load3(loadex),
+	reg_quad5 reg_h(.a(alu_z), .a2(asu_z[15:8]), .a3(q_d), .a4(mulub[15:8]), .a5(muluw[15:8]),//R800
+		.load(load_h), .load2(loada_hl), .load3(loadex), .load4(i_mulub & s_if), .load5(i_muluw & s_if),//R800
 		.regsel(sel_exx),
 		.i_dd(idd & indexvalid), .i_fd(ifd & indexvalid),
 		.clk(clk), .q(q_h));
-	reg_quad3 reg_l(.a(alu_z), .a2(asu_z[7:0]), .a3(q_e),
-		.load(load_l), .load2(loadal), .load3(loadex),
+	reg_quad5 reg_l(.a(alu_z), .a2(asu_z[7:0]), .a3(q_e), .a4(mulub[7:0]), .a5(muluw[7:0]),//R800
+		.load(load_l), .load2(loadal), .load3(loadex), .load4(i_mulub & s_if), .load5(i_muluw & s_if),//R800
 		.regsel(sel_exx),
 		.i_dd(idd & indexvalid), .i_fd(ifd & indexvalid),
 		.clk(clk), .q(q_l));
@@ -1319,19 +1346,6 @@ module reg_2s(a, a2, load, load2, set, clk, q);
 	end
 endmodule
 
-// 3 input quad register
-
-module reg_quad3(a, a2, a3, load, load2, load3, regsel, i_dd, i_fd, clk, q);
-	input [7:0] a, a2, a3;
-	input load, load2, load3, regsel, i_dd, i_fd, clk;
-	output [7:0] q;
-	reg [7:0] r[0:3];
-	wire [1:0] adr = { i_dd | i_fd, ~i_dd & regsel | i_fd };
-	always @(posedge clk) 
-		if (load | load2 | load3) r[adr] <= load ? a : load2 ? a2 : a3;
-	assign q = r[adr];
-endmodule
-
 // PCH register: 2 input register w/ increment, decrement, clear
 
 module reg_pch(a, a2, load, load2, count, dec, clr, clk, q);
@@ -1398,3 +1412,25 @@ module reg_r(a, load, count, clr, clk, q);
 		else if (count) q[6:0] <= q[6:0] + 1;
 endmodule
 
+//R800
+module reg_dual3(a, a2, a3, load, load2, load3, regsel, clk, q);
+	input [7:0] a, a2 ,a3;
+	input load, load2, load3,regsel, clk;
+	output [7:0] q;
+	reg [7:0] r[0:1];
+	always @(posedge clk) 
+		if (load | load2 | load3) r[regsel] <= load ? a : load2 ? a2 : a3;
+	assign q = r[regsel];
+endmodule
+
+//R800
+module reg_quad5(a, a2, a3, a4, a5, load, load2, load3, load4, load5, regsel, i_dd, i_fd, clk, q);
+	input [7:0] a, a2, a3, a4, a5;
+	input load, load2, load3, load4, load5, regsel, i_dd, i_fd, clk;
+	output [7:0] q;
+	reg [7:0] r[0:3];
+	wire [1:0] adr = { i_dd | i_fd, ~i_dd & regsel | i_fd };
+	always @(posedge clk) 
+		if (load | load2 | load3 | load4 | load5) r[adr] <= load ? a : load2 ? a2 : load3 ? a3 : load4 ? a4 : a5;
+	assign q = r[adr];
+endmodule
